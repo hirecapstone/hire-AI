@@ -2,7 +2,7 @@ import firebase_admin
 from firebase_admin import credentials, storage
 
 # 서비스 계정 키 로드
-cred = credentials.Certificate("firebase/hire-ai-a11ed-firebase-adminsdk-fbsvc-e1e893796c.json")
+cred = credentials.Certificate("firebase/hire-ai-a11ed-firebase-adminsdk-fbsvc-0b544a898e.json")
 
 # Firebase 초기화 (storageBucket 값을 Firebase 콘솔에서 복사한 URL로 설정)
 firebase_admin.initialize_app(cred, {
