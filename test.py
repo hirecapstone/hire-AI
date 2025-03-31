@@ -32,9 +32,11 @@ latest_file = max(mp4_files, key=lambda b: b.time_created)
 
 print(f"가장 최근 업로드된 파일: {latest_file.name}")
 
-# 로컬 파일 이름 설정
-local_mp4 = "latest.mp4"
-local_wav = "latest.wav"
+firebase_filename = os.path.basename(latest_file.name)     
+filename_wo_ext = os.path.splitext(firebase_filename)[0]   
+local_mp4 = firebase_filename                               
+local_wav = f"{filename_wo_ext}.wav"                        
+
 
 # 기존 파일 제거
 if os.path.exists(local_mp4): os.remove(local_mp4)
@@ -49,12 +51,14 @@ subprocess.run(['ffmpeg', '-y', '-i', local_mp4, local_wav])
 
 # faster-whisper 모델 실행
 start_time = time.time()
-model = WhisperModel("base", compute_type="int8", device="cpu")
-segments, info = model.transcribe(local_wav, beam_size=5, language="ko")
+model = WhisperModel("medium", compute_type="int8", device="cpu")
+segments, info = model.transcribe(local_wav, beam_size=1, language="ko")
+
+print("텍스트 변환 결과:")
+for segment in segments:
+    print(segment.text)
+
 end_time = time.time()
 
 # 결과 출력
 print("Transcription Time:", round(end_time - start_time, 2), "seconds")
-print("텍스트 변환 결과:")
-for segment in segments:
-    print(segment.text)
