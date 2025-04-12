@@ -5,30 +5,13 @@ import mediapipe as mp
 import numpy as np
 import os
 import time
+import sys
 
-# ===== Firebase Storage에서 가장 최근 영상 다운로드 =====
-def download_latest_video_from_firebase():
-    if not firebase_admin._apps:
-        cred = credentials.Certificate("firebase/hire-ai-a11ed-firebase-adminsdk-fbsvc-0b544a898e.json")
-        firebase_admin.initialize_app(cred, {
-            'storageBucket': 'hire-ai-a11ed.firebasestorage.app'
-        })
+if len(sys.argv) < 2:
+    print("❌ mp4 파일명을 인자로 넘겨주세요.")
+    sys.exit(1)
 
-    bucket = storage.bucket()
-    blobs = list(bucket.list_blobs())
-
-    if not blobs:
-        print("❌ Firebase Storage에 파일이 없습니다.")
-        return None
-
-    latest_blob = max(blobs, key=lambda b: b.updated)
-    filename = latest_blob.name
-    local_filename = os.path.basename(filename)
-
-    latest_blob.download_to_filename(local_filename)
-    print(f"✅ 최신 파일 '{filename}' 다운로드 완료 → {local_filename}")
-
-    return local_filename
+video_path = sys.argv[1]
 
 # ===== 분석 함수 =====
 def extract_landmarks(results, face=False, pose=False):
@@ -41,49 +24,50 @@ def extract_landmarks(results, face=False, pose=False):
             landmarks.append([lm.x, lm.y, lm.z])
     return landmarks
 
-def detect_smile_change(face_avg, baseline):
-    if len(face_avg) < 300 or baseline is None:
-        return "중립"
-    smile_score = face_avg[13][1] - (face_avg[61][1] + face_avg[291][1]) / 2
-    baseline_score = baseline[13][1] - (baseline[61][1] + baseline[291][1]) / 2
-    return "웃음" if smile_score - baseline_score > 0.005 else "중립"
+def calculate_smile_score(landmarks):
+    try:
+        left = np.array(landmarks[61])
+        right = np.array(landmarks[291])
+        mid = np.array(landmarks[13])  # 윗입술 중앙
 
-def detect_posture_change(pose_avg, baseline):
-    if len(pose_avg) < 13 or baseline is None:
-        return "정자세입니다"
-    ls, rs = pose_avg[11], pose_avg[12]
-    base_ls, base_rs = baseline[11], baseline[12]
+        mouth_width = np.linalg.norm(right[:2] - left[:2])
+        mouth_height = abs(mid[1] - (left[1] + right[1]) / 2)
+        slope = (left[1] + right[1]) / 2 - mid[1]
 
-    dy = (ls[1] - rs[1]) - (base_ls[1] - base_rs[1])
-    dz = ((ls[2] + rs[2]) / 2) - ((base_ls[2] + base_rs[2]) / 2)
+        return (mouth_height + slope) / mouth_width
+    except:
+        return None
 
-    if dy > 0.04:
-        return "왼쪽으로 기울어졌습니다"
-    elif dy < -0.04:
-        return "오른쪽으로 기울어졌습니다"
-    elif dz < -0.07:
-        return "몸이 앞으로 숙여졌습니다"
-    elif dz > 0.07:
-        return "몸이 뒤로 젖혀졌습니다"
-    return "정자세입니다"
+def calculate_eye_diff(landmarks):
+    if len(landmarks) < 468:
+        return None
+    return abs(landmarks[33][0] - landmarks[263][0])
 
-def detect_gaze_direction(face_avg, baseline_eye_diff):
-    if len(face_avg) < 468:
-        return True, baseline_eye_diff
-    left_x, right_x = face_avg[33][0], face_avg[263][0]
-    eye_diff = abs(left_x - right_x)
-    if baseline_eye_diff is None:
-        return True, eye_diff
-    return abs(eye_diff - baseline_eye_diff) < 0.02, baseline_eye_diff
+def calculate_posture_metrics(pose_lm):
+    if len(pose_lm) < 13:
+        return None, None
+    ls = pose_lm[11]
+    rs = pose_lm[12]
+    shoulder_y_diff = ls[1] - rs[1]
+    shoulder_z = (ls[2] + rs[2]) / 2
+    return shoulder_y_diff, shoulder_z
 
-def detect_iris_direction(landmarks):
+def detect_iris_direction_refined(landmarks):
     try:
         left_iris_x = landmarks[468][0]
-        left_center_x = (landmarks[33][0] + landmarks[133][0]) / 2
+        left_inner = landmarks[133][0]
+        left_outer = landmarks[33][0]
+        left_width = abs(left_outer - left_inner)
+        left_offset_ratio = abs(left_iris_x - (left_inner + left_outer) / 2) / left_width
+
         right_iris_x = landmarks[473][0]
-        right_center_x = (landmarks[362][0] + landmarks[263][0]) / 2
-        avg_offset = ((left_iris_x - left_center_x) + (right_iris_x - right_center_x)) / 2
-        return abs(avg_offset) < 0.02
+        right_inner = landmarks[362][0]
+        right_outer = landmarks[263][0]
+        right_width = abs(right_outer - right_inner)
+        right_offset_ratio = abs(right_iris_x - (right_inner + right_outer) / 2) / right_width
+
+        avg_offset_ratio = (left_offset_ratio + right_offset_ratio) / 2
+        return avg_offset_ratio < 0.01
     except:
         return True
 
@@ -101,14 +85,14 @@ def analyze_video(video_path):
     print(f"🎞 FPS: {fps}, 전체 프레임: {frame_count}, 영상 길이: {duration:.2f}초")
 
     face_buffer, pose_buffer = [], []
-    face_intervals, posture_intervals, not_looking_intervals = [], [], []
+    smile_scores, eye_diffs, posture_ys, posture_zs = [], [], [], []
 
+    face_intervals, posture_intervals, not_looking_intervals = [], [], []
     face_state, face_start = "중립", None
     posture_state, posture_start = "정자세입니다", None
     posture_change_count = 0
     not_looking_count = 0
 
-    face_baseline, pose_baseline, baseline_eye_diff = None, None, None
     current_sec, frame_idx = 0, 0
     start_time = time.time()
 
@@ -131,29 +115,60 @@ def analyze_video(video_path):
             face_avg = np.mean(face_valid, axis=0) if face_valid else None
             pose_avg = np.mean(pose_valid, axis=0) if pose_valid else None
 
-            if current_sec < 2:
+            if current_sec < 5:
                 if face_avg is not None:
-                    face_baseline = face_avg
-                    _, baseline_eye_diff = detect_gaze_direction(face_avg, None)
+                    smile = calculate_smile_score(face_avg)
+                    eye = calculate_eye_diff(face_avg)
+                    if smile is not None:
+                        smile_scores.append(smile)
+                    if eye is not None:
+                        eye_diffs.append(eye)
                 if pose_avg is not None:
-                    pose_baseline = pose_avg
+                    y_diff, z_avg = calculate_posture_metrics(pose_avg)
+                    if y_diff is not None:
+                        posture_ys.append(y_diff)
+                    if z_avg is not None:
+                        posture_zs.append(z_avg)
             else:
                 if face_avg is not None:
-                    new_face_state = detect_smile_change(face_avg, face_baseline)
+                    smile_score = calculate_smile_score(face_avg)
+                    eye_diff = calculate_eye_diff(face_avg)
+                    iris_check = detect_iris_direction_refined(face_avg)
+                    baseline_smile = np.mean(smile_scores) if smile_scores else 0
+                    baseline_eye = np.mean(eye_diffs) if eye_diffs else 0
+
+                    # 디버깅 출력
+                    print(f"[DEBUG] 초:{current_sec}, smile_score:{smile_score:.4f}, baseline:{baseline_smile:.4f}, diff:{smile_score - baseline_smile:.4f}")
+
+                    new_face_state = "웃음" if smile_score - baseline_smile > 0.11 else "중립"
                     if new_face_state != face_state:
                         if face_state != "중립" and face_start is not None:
                             face_intervals.append((face_start, current_sec, face_state))
                         face_start = current_sec if new_face_state != "중립" else None
                         face_state = new_face_state
 
-                    is_looking, baseline_eye_diff = detect_gaze_direction(face_avg, baseline_eye_diff)
-                    iris_check = detect_iris_direction(face_avg)
-                    if not is_looking or not iris_check:
+                    if eye_diff - baseline_eye > 0.02 or not iris_check:
                         not_looking_intervals.append(current_sec)
                         not_looking_count += 1
 
                 if pose_avg is not None:
-                    new_posture = detect_posture_change(pose_avg, pose_baseline)
+                    y_diff, z_avg = calculate_posture_metrics(pose_avg)
+                    base_y = np.mean(posture_ys) if posture_ys else 0
+                    base_z = np.mean(posture_zs) if posture_zs else 0
+                    dy = y_diff - base_y
+                    dz = z_avg - base_z
+
+                    if dy > 0.04:
+                        new_posture = "왼쪽으로 기울어졌습니다"
+                    elif dy < -0.04:
+                        new_posture = "오른쪽으로 기울어졌습니다"
+                    elif dz < -0.1:
+                        new_posture = "몸이 앞으로 숙여졌습니다"
+                    elif dz > 0.1:
+                        new_posture = "몸이 뒤로 젖혀졌습니다"
+                    else:
+                        new_posture = "정자세입니다"
+
                     if new_posture != posture_state:
                         if posture_state != "정자세입니다" and posture_start is not None:
                             posture_intervals.append((posture_start, current_sec, posture_state))
@@ -172,9 +187,9 @@ def analyze_video(video_path):
         posture_intervals.append((posture_start, current_sec, posture_state))
         posture_change_count += 1
 
-    elapsed = time.time() - start_time
-    minutes, seconds = int(elapsed // 60), int(elapsed % 60)
+    end_time = time.time()
 
+    # ===== 결과 출력 =====
     print("\n🙂 얼굴 표정 분석 결과:")
     if face_intervals:
         for s, e, state in face_intervals:
@@ -221,10 +236,8 @@ def analyze_video(video_path):
     else:
         print(f" - 대부분 정면을 잘 응시하였습니다! ({not_looking_count}회만 감지됨) 👍")
 
-    print(f"\n⏱️ 분석 소요 시간: {minutes}분 {seconds}초 ({elapsed:.2f}초)")
+    print(f"\n⏱️ Mediapipe 소요 시간: {round(end_time - start_time, 2)} seconds")
 
-# ===== 실행 =====
+# 실행
 if __name__ == "__main__":
-    video_path = download_latest_video_from_firebase()
-    if video_path:
-        analyze_video(video_path)
+    analyze_video(video_path)
