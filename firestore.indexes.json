@@ -1,0 +1,15 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "interview_answers",
+      "queryScope": "COLLECTION",
+      "fields": []
+    },
+    {
+      "collectionGroup": "interview_questions",
+      "queryScope": "COLLECTION",
+      "fields": []
+    }
+  ],
+  "fieldOverrides": []
+}

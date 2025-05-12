@@ -1,8 +1,8 @@
 {
   "functions": [
     {
-      "source": "functions",
-      "codebase": "default",
+      "source": "functions/node",
+      "codebase": "node-fn",
       "ignore": [
         "node_modules",
         ".git",
@@ -10,9 +10,28 @@
         "firebase-debug.*.log",
         "*.local"
       ],
-      "predeploy": [
-        
-      ]
+      "predeploy": []
+    },
+    {
+      "source": "functions/python/app",
+      "codebase": "python-fn",
+      "runtime": "python310",
+      "entrypoint": "f_functions.handle_new_video",
+      "ignore": [
+        "venv",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ],
+      "predeploy": []
     }
-  ]
+  ],
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "storage": {
+    "rules": "storage.rules"
+  }
 }

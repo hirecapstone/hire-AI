@@ -15,6 +15,9 @@ exports.onSelectRoleCreated = functions
   .onCreate(async (snap, context) => {
     const data = snap.data();
     
+    const sessionId = data.sessionId || ''; //sessionId추가
+
+
     const category = data.category || '';
     const job = data.job || '';
     const achievements = data.achievements || '';
@@ -23,7 +26,12 @@ exports.onSelectRoleCreated = functions
     const major = data.major || '';
     const projects = data.projects || '';
     const roles = data.roles || '';
-
+    const staticQuestions = [
+      '자기소개 해주세요',
+      '지원 동기는 무엇인가요?',
+      '본인의 장단점을 말해주세요.'
+    ];
+    
     let fieldDescription = `${category} ${job}`;
 
     if (achievements) {
@@ -79,11 +87,16 @@ exports.onSelectRoleCreated = functions
         .split('\n')
         .filter(line => line.match(/^\d+\./))
         .map(line => line.replace(/^\d+\.\s*/, '').trim());
-
-      await db.collection('interview_questions').add({
+      const finalQuestions = [
+        ...staticQuestions,
+        ...questions.slice(0, 6)
+      ];
+      await db.collection('interview_questions').doc(sessionId).set({
         field: fieldDescription,
-        questions: questions.slice(0, 6),
-      });
+        questions: finalQuestions,
+        sessionId: sessionId, // sessionId 추가
+        });
+        
 
       console.log(` ${fieldDescription} 질문 저장 완료`);
     } catch (error) {
