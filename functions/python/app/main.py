@@ -172,40 +172,37 @@ def process_videos(session_id: str):
         prompt = (
             f"질문: {q}\n"
             f"답변: {a}\n\n"
-            "1) 이 답변이 질문에 적절히 답했는지 간단히(한두 문장) 피드백해 주세요.\n"
-            "2) 다음 다섯 가지 기준을 각각 만족하면 1점, 아니면 0점으로 채점해 주세요:\n"
-            "   • 적절성(Relevance)\n"
-            "   • 충실성(Completeness)\n"
-            "   • 명료성(Clarity)\n"
-            "   • 논리성(Logic)\n"
-            "   • 분량(Length, 최소 500자 이상)\n\n"
-            "반드시 JSON 형식으로만 응답해주세요:\n"
-            '{"feedback":"<피드백 텍스트>",'  
-            '"scores":{'              
-            '"relevance":0,'         
-            '"completeness":0,'      
-            '"clarity":0,'           
-            '"logic":0,'             
-            '"length":0'             
-            '},'                      
-            '"total":0}'             
+            "아래 형식(JSON)으로만 응답해 주세요:\n"
+            "1) feedback: 한두 문장으로 간단한 피드백 작성\n"
+            "2) scores: 다섯 가지 기준(Relevance, Completeness, Clarity, Logic, Length)에 대해 **0,1,2,3,4,5**의 정수만 사용하여 채점 (true/false 사용 금지)\n"
+            "   **0.0에서 5.0 사이 실수**로 채점 (소수점 첫째 자리까지)\n"
+            "   - 예: 0.0, 1.5, 3.2, 4.0, 5.0\n"
+            "3) total: scores 값들의 평균을 소수점 둘째 자리까지 반올림\n\n"
+            # 예시 JSON
+            '{"feedback":"답변이 전반적으로 좋으나, 구체적인 예시가 부족합니다.",'
+            '"scores":{"relevance":4.2,"completeness":3.5,"clarity":4.8,"logic":4.0,"length":2.7},'
+            '"total":3.44}'
         )
+        
         resp = client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role":"system", "content":"너는 매우 엄격한 면접관입니다. 한 가지 기준이라도 만족하지 않으면 0점을 주어야 합니다."},
+                {"role":"system", "content":"너는 공정한 면접관입니다."},
                 {"role":"user",   "content": prompt}
             ],
             temperature=0,
             max_tokens=256
         )
-        data = json.loads(resp.choices[0].message.content)
+        
+        raw = resp.choices[0].message.content
+        print(f"[DEBUG][{session_id}] Raw GPT response (1st):\n{raw}", flush=True)
+        data = json.loads(raw)
 
         feedbacks.append(data.get("feedback", ""))
-        total_scores.append(int(data.get("total", 0)))
+        total_scores.append(float(data.get("total", 0.0)))
 
         detail = data.get("scores", {})
-        detail = {k: int(v) for k, v in detail.items()}
+        detail = {k: round(float(v), 1) for k, v in data["scores"].items()}
         scores_details.append(detail)
 
         print(f"[{session_id}] ({idx}/{len(questions)}) 피드백+점수 생성 완료 (⏱ {time.time()-fb0:.1f}s)", flush=True)
